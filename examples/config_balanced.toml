@@ -1,0 +1,61 @@
+[fiber]
+v_number = 5.8
+n1 = 1.0
+length = 1.0e4
+radius_units = 1.0
+radius_m = "" # meters (leave empty to disable SI scaling)
+
+[beam]
+wavelength = 0.0443
+dist_to_waist = 0.0
+w0_x = 0.6
+w0_y = 0.7
+x0 = -0.2
+y0 = -0.1
+roll_angle = 0.0
+pitch_angle = 0.0
+yaw_angle = 0.0
+polarization_angle = 0.0
+
+[domain]
+axis_size = 2.0
+r_origin_factor = 1.3
+
+[generator]
+modes_to_test = [[0, 1], [0, 2], [1, 1], [1, 2], [2, 1], [3, 1]]
+use_custom_coeffs = false
+dist_from_fiber = 100.0
+
+[grid.generator]
+grid_size = 256
+
+[grid.propagation]
+dx = 0.08333333333333333
+oversampling_x = 4
+oversampling_z = 4
+rz_factor = 1.0
+k_max_factor = 1.0
+min_point_per_period = 6
+
+[propagation]
+dist_from_fiber_start = 0.0
+dist_from_fiber_stop = 200.0
+dist_from_fiber_step = 5.0
+
+[runtime]
+supervision_mode = false
+n_threads = 14
+recompute = true
+
+[visualization]
+cmap = "gnuplot2"
+cmap_levels = 20
+
+# Example custom coefficient entry (uncomment to use):
+# [[custom_coeffs]]
+# l = 0
+# m = 1
+# x_p_phi = [1.0, 0.0]
+# y_p_phi = [0.0, 0.0]
+# x_m_phi = [0.0, 0.0]
+# y_m_phi = [0.0, 0.0]
