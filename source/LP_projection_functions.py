@@ -322,7 +322,7 @@ def get_tilted_beam_from_incidence(
     **kwargs,
 ):
 
-    Z_lab = np.full_like(X_lab, z_plane, dtype=float)
+    Z_lab = z_plane
 
     P_inc = np.array([x_incidence, y_incidence, z_plane])
 
@@ -346,4 +346,3 @@ def get_tilted_beam_from_incidence(
         euler_gamma=euler_gamma,
         **kwargs,
     )
-

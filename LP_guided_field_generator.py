@@ -1,119 +1,184 @@
+import sys
+from typing import Optional, Tuple, List
+
 import numpy as np
 import pandas as pd
+from loguru import logger
 
+from log_init import init_logging
+from io_utils import load_config, AppConfig
 from source.LP_projection_functions import (
     get_guided_modes,
     get_LP_modes_projection_coefficients,
     get_tilted_beam_from_incidence,
 )
-
-from source.propagation import (
-    fiber_propagation,
-)
-
-# --------------------------------------- PARAMETERS ----------------------------------------------
-# -------------------------------------------------------------------------------------------------
-# NOTE: all the length are measured in units of fiber radius
-
-# --- Various Parameters ---
-FIBER_V = 5.8
-MODES_TO_TEST = [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (3, 1)]
-FIBER_N1 = 1
-FIBER_LENGTH = 1.e4
-DIST_FROM_FIBER = 800
-
-# --- Injected field parameters ---
-LAMBDA = 0.0443                 # Wavelength of the injected beam
-DIST_TO_WAIST = 0               # Distance from the beam waist to the fiber input plane
-W0_X = 0.6                      # Beam waist size along the x-axis
-W0_Y = 0.7                       # Beam waist size along the y-axis
-X0 = -0.2                        # x-coordinate of the beam's incidence point on the fiber input plane
-Y0 = -0.1                        # y-coordinate of the beam's incidence point on the fiber input plane
-ROLL_ANGLE = -0 * np.pi / 180    # Roll angle of the beam (rotation about the z-axis, in radians)
-PITCH_ANGLE = 0 * np.pi / 180   # Pitch angle of the beam (tilt in the x-z plane, in radians)
-YAW_ANGLE = 0 * np.pi / 180     # Yaw angle of the beam (tilt in the y-z plane, in radians)
-POLARIZATION_ANGLE = 0    # Polarization angle of the beam (angle of the electric field vector, in radians)
-
-# --- Grid stuff ---
-AXIS_SIZE = 1.3
-GRID_SIZE = 1000
-
-# -------------------------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------------------------
+from source.propagation import fiber_propagation
 
 
-# --- Fiber radius ---
-radius = 1.0
+def generate_guided_field(
+    config: AppConfig,
+    save_outputs: bool = True,
+    coeff_path: str = "propagate_field_coeff.csv",
+    modes_path: str = "guided_modes.npy",
+) -> Tuple[List[dict], pd.DataFrame, pd.DataFrame]:
+    fiber = config.fiber
+    beam = config.beam
+    domain = config.domain
+    grid = config.grid.generator
+    generator = config.generator
+    custom_coeffs = config.custom_coeffs
 
-# --- Some stuff on angles ---
-NA = LAMBDA * FIBER_V / (2 * np.pi * radius)
+    fiber_v = fiber.v_number
+    modes_to_test = generator.modes_to_test
+    fiber_n1 = fiber.n1
+    fiber_length = fiber.length
+    dist_from_fiber = generator.dist_from_fiber
+    use_custom_coeffs = generator.use_custom_coeffs
 
-# --- Grid ---
-axis_ext = AXIS_SIZE * radius
-x = np.linspace(-axis_ext, axis_ext, GRID_SIZE)
-y = np.linspace(-axis_ext, axis_ext, GRID_SIZE)
-X, Y = np.meshgrid(x, y)
+    radius = fiber.radius_units
+    if use_custom_coeffs:
+        modes_to_test = [(item.l, item.m) for item in custom_coeffs]
+        if not modes_to_test:
+            raise ValueError("USE_CUSTOM_COEFFS is True, but custom_coeffs is empty.")
 
-# --- Ploar coordinates ---
-R = np.sqrt(X**2 + Y**2)
-PHI = np.arctan2(Y, X)
+    logger.info("Starting guided field generation")
+    logger.debug(
+        "Params: FIBER_V={}, MODES_TO_TEST={}, FIBER_N1={}, FIBER_LENGTH={}, "
+        "DIST_FROM_FIBER={}, USE_CUSTOM_COEFFS={}",
+        fiber_v,
+        modes_to_test,
+        fiber_n1,
+        fiber_length,
+        dist_from_fiber,
+        use_custom_coeffs,
+    )
+    logger.debug(
+        "Beam params: LAMBDA={}, DIST_TO_WAIST={}, W0_X={}, W0_Y={}, X0={}, Y0={}, "
+        "ROLL_ANGLE={}, PITCH_ANGLE={}, YAW_ANGLE={}, POLARIZATION_ANGLE={}",
+        beam.wavelength,
+        beam.dist_to_waist,
+        beam.w0_x,
+        beam.w0_y,
+        beam.x0,
+        beam.y0,
+        beam.roll_angle,
+        beam.pitch_angle,
+        beam.yaw_angle,
+        beam.polarization_angle,
+    )
+    logger.debug("Grid params: AXIS_SIZE={}, GRID_SIZE={}", domain.axis_size, grid.grid_size)
 
-# --- Differential Area Element ---
-dA = (axis_ext * 2 / GRID_SIZE) ** 2
+    na = beam.wavelength * fiber_v / (2 * np.pi * radius)
+    logger.debug("Computed NA={}", na)
 
-# --- DEFINE THE INPUT ELECTRIC FIELD AS A TILTED GAUSSIAN BEAM ---
-E_input = get_tilted_beam_from_incidence(
-    X,
-    Y,
-    z_plane=0,
-    x_incidence=X0,
-    y_incidence=Y0,
-    dist_to_waist=DIST_TO_WAIST,
-    euler_alpha=ROLL_ANGLE,
-    euler_beta=PITCH_ANGLE,
-    euler_gamma=YAW_ANGLE,
-    dA=dA,
-    w0_x=W0_X,
-    w0_y=W0_Y,
-    wavelength=LAMBDA,
-    polarization_angle=POLARIZATION_ANGLE,
-)
+    axis_ext = domain.axis_size * radius
+    x = np.linspace(-axis_ext, axis_ext, grid.grid_size)
+    y = np.linspace(-axis_ext, axis_ext, grid.grid_size)
+    X, Y = np.meshgrid(x, y)
+    logger.debug("Grid built with axis_ext={}, shape={}", axis_ext, X.shape)
 
-# --- COMPUTE THE GUIDED MODES AND THEIR PROJECTION COEFFICIENTS ON THE INPUT FIELD ---
-guided_modes = []
-coefficients = []
-for l, m in MODES_TO_TEST:
+    R = np.sqrt(X**2 + Y**2)
+    PHI = np.arctan2(Y, X)
+    dA = (axis_ext * 2 / grid.grid_size) ** 2
+    logger.debug("Computed dA={}", dA)
 
-    mode = get_guided_modes(l, m, FIBER_V, radius, R, PHI, dA)
+    E_input = None
+    if not use_custom_coeffs:
+        E_input = get_tilted_beam_from_incidence(
+            X,
+            Y,
+            z_plane=0,
+            x_incidence=beam.x0,
+            y_incidence=beam.y0,
+            dist_to_waist=beam.dist_to_waist,
+            euler_alpha=beam.roll_angle,
+            euler_beta=beam.pitch_angle,
+            euler_gamma=beam.yaw_angle,
+            dA=dA,
+            w0_x=beam.w0_x,
+            w0_y=beam.w0_y,
+            wavelength=beam.wavelength,
+            polarization_angle=beam.polarization_angle,
+        )
+        logger.debug(
+            "Input field computed with shapes: Ex={}, Ey={}",
+            E_input[0].shape,
+            E_input[1].shape,
+        )
+    else:
+        logger.info("Using custom LP mode coefficients; skipping input field projection.")
 
-    if mode is not None:
+    guided_modes = []
+    coefficients = []
+    for l, m in modes_to_test:
+        logger.debug("Computing guided mode LP{}{}", l, m)
+        mode = get_guided_modes(l, m, fiber_v, radius, R, PHI, dA)
+
+        if mode is None:
+            logger.debug("Mode LP{}{} not guided or not converged", l, m)
+            continue
+
         guided_modes.append(mode)
-        coefficients_res = get_LP_modes_projection_coefficients(E_input, mode, dA)
+        logger.debug("Mode LP{}{} found with u={}", l, m, mode.get("u"))
+
+        if use_custom_coeffs:
+            spec = next((item for item in custom_coeffs if item.l == l and item.m == m), None)
+            if spec is None:
+                logger.debug("No custom coefficient provided for LP{}{}", l, m)
+                continue
+            coefficients_res = {
+                "l": l,
+                "m": m,
+                "u": mode.get("u"),
+                "x_p_phi": spec.x_p_phi,
+                "y_p_phi": spec.y_p_phi,
+                "x_m_phi": spec.x_m_phi,
+                "y_m_phi": spec.y_m_phi,
+            }
+        else:
+            coefficients_res = get_LP_modes_projection_coefficients(E_input, mode, dA)
+
         coefficients.append(coefficients_res)
 
+    if not coefficients:
+        raise ValueError("No valid coefficients were generated; check mode selection and inputs.")
 
-# create a pd dataframe, and make (l,m) the index
-df_coeff = pd.DataFrame(coefficients)
-df_coeff.set_index(["l", "m"], inplace=True)
+    df_coeff = pd.DataFrame(coefficients)
+    df_coeff.set_index(["l", "m"], inplace=True)
+    logger.info("Computed projection coefficients for {} modes", len(df_coeff))
 
-# --- TERMINAL OUTPUT ---
-print("\n", "SQUARED MODULUS OF COEFFICIENTS", "\n" + "*" * 70)
-print(
-    (df_coeff.iloc[:, 1:]).to_string(
-        float_format=lambda x: f"{x:.2f}", justify="center", col_space=10
+    logger.info("Squared modulus of coefficients:\n{}", "*" * 70)
+    logger.info(
+        "\n{}",
+        (df_coeff.iloc[:, 1:]).to_string(
+            float_format=lambda x: f"{x:.2f}", justify="center", col_space=10
+        ),
     )
-)
-print("*" * 70 + "\n")
+    logger.info("{}", "*" * 70)
+
+    df_coeff_fib_prop = fiber_propagation(
+        df_coeff,
+        n1=fiber_n1,
+        a=radius,
+        lam=beam.wavelength,
+        z_fiber=fiber_length,
+    )
+    logger.info("Fiber propagation completed")
+
+    if save_outputs:
+        df_coeff_fib_prop.to_csv(coeff_path, index="True")
+        np.save(modes_path, guided_modes)
+        logger.info("Saved outputs to {} and {}", coeff_path, modes_path)
+
+    return guided_modes, df_coeff, df_coeff_fib_prop
 
 
-# --- CALCULATE THE COEFFICIENTS AFTER THE PROPAGATION INSIDE THE FIBER ---
-df_coeff_fib_prop = fiber_propagation(
-    df_coeff,
-    n1=FIBER_N1,
-    a=radius,
-    lam=LAMBDA,
-    z_fiber=FIBER_LENGTH,
-)
+def main(config_path: Optional[str] = None) -> None:
+    init_logging()
+    path = config_path or (sys.argv[1] if len(sys.argv) > 1 else "input/config.toml")
+    config = load_config(path)
+    generate_guided_field(config)
 
-df_coeff_fib_prop.to_csv("propagate_field_coeff.csv", index="True")
-np.save("guided_modes.npy", guided_modes)
+
+if __name__ == "__main__":
+    main()
