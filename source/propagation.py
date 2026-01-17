@@ -155,9 +155,8 @@ def free_propagation_asm_hankel(
 
     x = np.linspace(-R_z, R_z, Nx)
     y = np.linspace(-R_z, R_z, Nx)
-    X, Y = np.meshgrid(x, y)
-    R = np.sqrt(X**2 + Y**2)
-    PHI = np.arctan2(Y, X)
+    R = np.hypot(x[None, :], y[:, None])
+    PHI = np.arctan2(y[:, None], x[None, :])
 
     # Coordinate in k_space
     # Since we are not using fft we can use as many point as we want
