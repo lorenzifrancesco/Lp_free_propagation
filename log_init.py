@@ -29,12 +29,3 @@ def init_logging():
     logger.add(log_file_deep, level="TRACE", rotation=None, colorize=False, enqueue=True)
 
     logger.debug(f"Logger initialized for script: {script_name}")
-
-    # Apply user matplotlib style globally if present
-    style_path = Path.home() / ".config" / "matplotlib" / "matplotlibrc"
-    if style_path.exists():
-        with contextlib.suppress(Exception):
-            import matplotlib
-
-            matplotlib.rc_file(style_path)
-            logger.debug(f"Loaded matplotlib rc from {style_path}")
