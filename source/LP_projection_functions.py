@@ -185,6 +185,8 @@ def get_complete_guided_field(guided_modes, df_coeff, X, Y):
         m = mode["m"]
 
         coeff = df_coeff.loc[l, m]
+        if isinstance(coeff, pd.DataFrame):
+            coeff = coeff.iloc[0]
 
         E_guided_x_lm = (
             coeff["x_p_phi"] * mode["p_phi"] + coeff["x_m_phi"] * mode["m_phi"]

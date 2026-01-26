@@ -1,0 +1,1 @@
+Put these files in the input/ folder (git-ignored) to run the corresponding simulations and play with them.

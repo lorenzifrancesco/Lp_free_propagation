@@ -203,6 +203,8 @@ def free_propagation_asm_hankel(
         w = np.sqrt(fiber_V**2 - u**2)
 
         coeffs = df_coeff.loc[l, m]
+        if isinstance(coeffs, pd.DataFrame):
+            coeffs = coeffs.iloc[0]
 
         B = jv(l, u) / kn(l, w)
         norm_factor = get_normalization_factor(l, u, w, radius)
