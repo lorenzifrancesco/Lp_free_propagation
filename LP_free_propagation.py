@@ -46,20 +46,20 @@ def build_heatmaps(line_data, x_plot, z_plot, axis_unit, out_dir):
 
     plt.figure()
     plt.imshow(xz_map, extent=extent, origin="lower", aspect="auto")
-    plt.xlabel(rf"$\mathnormal{{x}}$ [$\mathnormal{{{axis_unit}}}$]")
-    plt.ylabel(rf"$\mathnormal{{z}}$ [$\mathnormal{{{axis_unit}}}$]")
-    plt.title(r"$\mathnormal{Intensity}$ projection ($\mathnormal{x}$-$\mathnormal{z}$)")
-    plt.colorbar(label=r"$\mathnormal{Intensity}$")
+    plt.xlabel(rf"$x$ [{axis_unit}]")
+    plt.ylabel(rf"$z$ [{axis_unit}]")
+    plt.title(r"Intensity projection ($x$-$z$)")
+    plt.colorbar(label="Intensity")
     plt.tight_layout()
     plt.savefig(out_dir / "intensity_xz.pdf")
     plt.close()
 
     plt.figure()
     plt.imshow(yz_map, extent=extent, origin="lower", aspect="auto")
-    plt.xlabel(rf"$\mathnormal{{y}}$ [$\mathnormal{{{axis_unit}}}$]")
-    plt.ylabel(rf"$\mathnormal{{z}}$ [$\mathnormal{{{axis_unit}}}$]")
-    plt.title(r"$\mathnormal{Intensity}$ projection ($\mathnormal{y}$-$\mathnormal{z}$)")
-    plt.colorbar(label=r"$\mathnormal{Intensity}$")
+    plt.xlabel(rf"$y$ [{axis_unit}]")
+    plt.ylabel(rf"$z$ [{axis_unit}]")
+    plt.title(r"Intensity projection ($y$-$z$)")
+    plt.colorbar(label="Intensity")
     plt.tight_layout()
     plt.savefig(out_dir / "intensity_yz.pdf")
     plt.close()
@@ -359,6 +359,23 @@ def run_free_propagation(
 
         return intensity, prop_axis_ext, x_axis, line_x, line_y, E_propagated_x, E_propagated_y
 
+    def _save_transverse_intensity(media_folder, z_index, z_val, intensity, prop_axis_ext):
+        plt.figure(figsize=(6, 5))
+        plt.imshow(
+            intensity,
+            extent=[-prop_axis_ext, prop_axis_ext, -prop_axis_ext, prop_axis_ext],
+            cmap=cmap,
+            origin="lower",
+        )
+        plt.colorbar(label="Intensity")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.title(f"Intensity at z={z_val * scale:.3f} {unit}")
+        plt.tight_layout()
+        out_path = media_folder / f"intensity_xy_z{z_index:05d}.png"
+        plt.savefig(out_path, dpi=150)
+        plt.close()
+
     try:
         if supervision_mode:
             logger.info("Running in supervision mode")
@@ -376,12 +393,20 @@ def run_free_propagation(
             logger.info("*" * 50)
 
             line_data: Dict[float, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+            z_indices = np.linspace(0, len(dist_from_fiber) - 1, 10, dtype=int)
+            z_index_set = set(z_indices.tolist())
             for z_index, z_dist in enumerate(tqdm(dist_from_fiber, desc="Propagating field")):
                 intensity, prop_axis_ext, x_axis, line_x, line_y, e_x, e_y = process_propagation(
                     z_dist
                 )
                 line_data[z_dist] = (x_axis, line_x, line_y)
                 _write_h5_field(z_index, z_dist, intensity, prop_axis_ext, x_axis, e_x, e_y)
+                if z_index in z_index_set:
+                    media_folder = Path(media_dir)
+                    media_folder.mkdir(exist_ok=True)
+                    _save_transverse_intensity(
+                        media_folder, z_index, z_dist, intensity, prop_axis_ext
+                    )
 
                 if z_dist == dist_from_fiber[0]:
                     plt.figure(figsize=(10, 8))
@@ -448,6 +473,8 @@ def run_free_propagation(
 
             logger.info("Launching propagation with {} worker threads", n_threads)
             line_data: Dict[float, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+            z_indices = np.linspace(0, len(dist_from_fiber) - 1, 10, dtype=int)
+            z_index_set = set(z_indices.tolist())
             with ThreadPoolExecutor(max_workers=n_threads) as executor:
                 futures = {
                     executor.submit(process_propagation, z_dist): (idx, z_dist)
@@ -461,6 +488,12 @@ def run_free_propagation(
                     intensity, prop_axis_ext, x_axis, line_x, line_y, e_x, e_y = future.result()
                     line_data[z_val] = (x_axis, line_x, line_y)
                     _write_h5_field(z_index, z_val, intensity, prop_axis_ext, x_axis, e_x, e_y)
+                    if z_index in z_index_set:
+                        media_folder = Path(media_dir)
+                        media_folder.mkdir(exist_ok=True)
+                        _save_transverse_intensity(
+                            media_folder, z_index, z_val, intensity, prop_axis_ext
+                        )
 
             media_folder = Path(media_dir)
             media_folder.mkdir(exist_ok=True)
@@ -488,6 +521,24 @@ def run_free_propagation(
         if h5_file is not None:
             h5_file.close()
             logger.info("Saved HDF5 field data to {}", h5_path)
+            h5_summary = [
+                "--- HDF5 SAVE ---",
+                f"path: {h5_path}",
+                f"z slices: {len(dist_from_fiber)}",
+                f"grid (per axis): {nx_min} .. {nx_max}",
+                f"x range: {-r_z_max * scale:.3f} .. {r_z_max * scale:.3f} {unit}",
+                f"y range: {-r_z_max * scale:.3f} .. {r_z_max * scale:.3f} {unit}",
+                f"z range: {z_min * scale:.3f} .. {z_max * scale:.3f} {unit}",
+                f"r_z range: {r_z_min * scale:.3f} .. {r_z_max * scale:.3f} {unit}",
+                f"dx: {dx_propagated_field * scale:.3e} {unit}",
+                f"axis unit: {unit}",
+                f"axis scale: {scale:.6g}",
+                "datasets: domain/{z,r_z}, fields/z_xxxxx/{x,y,E_x,E_y,intensity}, "
+                "initial_data/modes, initial_data/coefficients/{l,m,u,x_p_phi,y_p_phi,x_m_phi,y_m_phi}",
+            ]
+            if fiber_radius_m is not None:
+                h5_summary.append(f"r_ref: {fiber_radius_m:.6g} m")
+            logger.info("\n{}", "\n".join(h5_summary))
 
 
 def main(config_path: Optional[str] = None) -> None:

@@ -45,13 +45,13 @@ class FiberConfig(BaseModel):
         @field_validator("radius_m", mode="before")
         def _coerce_radius_m(cls, value: Any) -> Optional[float]:
             if value in (None, "", "null", "none", "None", 0):
-                return None
+                return 30e-6
             return value
     else:
         @validator("radius_m", pre=True)
         def _coerce_radius_m(cls, value: Any) -> Optional[float]:
             if value in (None, "", "null", "none", "None", 0):
-                return None
+                return 30e-6
             return value
 
 
